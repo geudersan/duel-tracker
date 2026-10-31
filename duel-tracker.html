@@ -246,6 +246,9 @@ svg.i{width:1.05em;height:1.05em;flex:none;fill:currentColor}
 .swatches{display:flex;gap:10px}
 .swatches button{width:36px;height:36px;border-radius:50%;background:var(--bg);color:var(--ink);font-weight:700;box-shadow:inset 0 0 0 1.5px var(--rail-line)}
 .swatches button[aria-pressed="true"]{box-shadow:0 0 0 3px var(--rail),0 0 0 5px var(--rail-ink)}
+.lifelog{list-style:none;margin:0;padding:0;max-height:38vh;overflow:auto;font-variant-numeric:tabular-nums}
+.lifelog li{display:grid;grid-template-columns:1fr 4ch 5ch;gap:12px;padding:7px 0;border-bottom:1px solid var(--rail-line)}
+.lifelog li b,.lifelog li span:last-child{text-align:right}
 .preview{border-radius:12px;overflow:hidden;aspect-ratio:626/457;max-width:100%;background:center/cover var(--rail-soft)}
 
 /* Card view */
@@ -420,7 +423,7 @@ details.rulings summary{cursor:pointer;font-weight:600;padding:6px 0}
       mana: prev ? prev.players[i].mana : (i ? "R" : "U"),
       life:20, poison:0, casts:0, blessing:false, conceded:false, path:[], completed:0, ventured:0
     })),
-    turn:0, active:null, first:null, monarch:null, initiative:null, wins:[0,0]
+    turn:0, active:null, first:null, monarch:null, initiative:null, wins:[0,0], log:[]
   });
   function normalize(s){
     if (!s || !Array.isArray(s.players)) return fresh();
@@ -537,10 +540,20 @@ details.rulings summary{cursor:pointer;font-weight:600;padding:6px 0}
     const p = +btn.dataset.p, d = +btn.dataset.d, kind = btn.dataset.act;
     const pl = state.players[p];
     if (kind === "life") {
-      commit("life"+p, () => { pl.life += d; }); showDelta(p, d);
+      const burst = lastKey === "life"+p && Date.now() - lastAt <= 1200; // same window commit() merges for undo
+      commit("life"+p, () => { pl.life += d; logLife(p, d, burst); }); showDelta(p, d);
     } else if (pl[kind] + d >= 0) {
       commit(kind+p, () => { pl[kind] += d; });
     }
+  }
+
+  // One log entry per burst of taps, so "−1 −1 −1" reads as "−3"
+  function logLife(p, d, burst){
+    const last = state.log[state.log.length - 1];
+    if (burst && last && last.p === p) {
+      last.d += d; last.life = state.players[p].life;
+      if (!last.d) state.log.pop();
+    } else state.log.push({p, d, life:state.players[p].life, turn:state.turn});
   }
 
   // Tap for one step, hold to keep counting
@@ -921,7 +934,13 @@ details.rulings summary{cursor:pointer;font-weight:600;padding:6px 0}
     }
     renderSwatches();
 
+    const entries = state.log.filter(e => e.p === p).reverse();
     sheetBody.replaceChildren(
+      h("div", {class:"field"}, h("span", {class:"lbl", text:"Life this game"}),
+        entries.length
+          ? h("ol", {class:"lifelog"}, entries.map(e => h("li", null,
+              h("span", {text: e.turn ? "Turn " + e.turn : "Before turn 1"}), h("b", {text:signed(e.d)}), h("span", {text:"→ " + e.life}))))
+          : h("p", {class:"hint", text:"No life changes yet. Every change lands here, newest first."})),
       h("div", {class:"field"}, h("label", {for:"pname", text:"Name"}), nameInput),
       h("div", {class:"field"}, cmdr, msg, preview,
         h("div", {class:"btnrow"},
@@ -972,7 +991,7 @@ details.rulings summary{cursor:pointer;font-weight:600;padding:6px 0}
 
     const extra = [];
     if (room === "trap") extra.push(h("button", {type:"button", class:"btn", text:nameOf(o) + " loses 5 life",
-      onclick:() => { step("trap", () => { state.players[o].life -= 5; }); showDelta(o, -5); }}));
+      onclick:() => { step("trap", () => { state.players[o].life -= 5; logLife(o, -5, false); }); showDelta(o, -5); }}));
     if (room === "throne") extra.push(h("p", {class:"hint", text:"Dungeon completed. Your next venture starts a new Undercity at the Secret Entrance."}));
 
     sheetBody.replaceChildren(
