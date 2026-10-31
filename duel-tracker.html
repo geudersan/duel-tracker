@@ -1,0 +1,921 @@
+<title>Duel Life Tracker</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Instrument+Sans:wght@400;600;700&display=swap">
+<style>
+/* Layout: two mirrored halves, each facing its player across the table, joined by a thin shared rail.
+   Each half takes its player's mana color, with their commander's art washed in behind the life total. */
+:root{
+  --table:#DEDAD2;
+  --rail:#FBFAF7;
+  --rail-ink:#1D1B22;
+  --rail-mute:#6A6672;
+  --rail-line:#D3CEC4;
+  --rail-soft:rgba(29,27,34,.06);
+  --scrim:rgba(24,21,30,.78);
+  --font-num:"Big Shoulders Display","Arial Narrow","Roboto Condensed",sans-serif;
+  --font-ui:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --table:#0F0E13; --rail:#1A1920; --rail-ink:#F0EEF4; --rail-mute:#9C98A8; --rail-line:#2F2C37;
+    --rail-soft:rgba(240,238,244,.07); --scrim:rgba(6,5,9,.82); color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --table:#0F0E13; --rail:#1A1920; --rail-ink:#F0EEF4; --rail-mute:#9C98A8; --rail-line:#2F2C37;
+  --rail-soft:rgba(240,238,244,.07); --scrim:rgba(6,5,9,.82); color-scheme:dark;
+}
+
+/* Mana identities: halves, coin faces, color pickers and mana symbols pick one */
+[data-mana="W"]{--bg:#ECE4CF;--ink:#2B2417}
+[data-mana="U"]{--bg:#1F5B97;--ink:#EEF4FB}
+[data-mana="B"]{--bg:#2A2530;--ink:#ECE6F1}
+[data-mana="R"]{--bg:#B13A27;--ink:#FFF0EA}
+[data-mana="G"]{--bg:#276541;--ink:#EAF6EC}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{
+  margin:0; background:var(--table); color:var(--rail-ink);
+  font-family:var(--font-ui); overflow:hidden;
+  -webkit-user-select:none; user-select:none; touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid currentColor;outline-offset:2px}
+svg.i{width:1.05em;height:1.05em;flex:none;fill:currentColor}
+
+.app{height:100%;display:grid;grid-template-rows:1fr auto 1fr}
+
+/* ---------- Player half ---------- */
+.half{
+  --soft:color-mix(in srgb,var(--ink) 12%,transparent);
+  --line:color-mix(in srgb,var(--ink) 30%,transparent);
+  position:relative; isolation:isolate; min-height:0; overflow:hidden;
+  background:var(--bg); color:var(--ink);
+  display:grid; grid-template-rows:auto 1fr auto auto; gap:8px;
+  padding-block:10px 12px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  transition:background-color .35s ease;
+}
+.half.top{transform:rotate(180deg)}
+
+/* Commander art, washed in the half's own color so numbers stay readable */
+.art{position:absolute;inset:0;z-index:-1;background:center 28%/cover no-repeat;opacity:0;transition:opacity .6s ease}
+.art.on{opacity:1}
+.art::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--bg) 62%,transparent) 0%,
+    color-mix(in srgb,var(--bg) 74%,transparent) 50%,
+    color-mix(in srgb,var(--bg) 93%,transparent) 100%);
+}
+
+.head{display:flex;align-items:center;gap:8px;min-width:0}
+.who{
+  flex:1;min-width:0;display:flex;align-items:center;gap:8px;text-align:left;
+  padding:6px 4px;border-radius:8px;
+}
+.who:hover{background:var(--soft)}
+.who-name{font-weight:700;font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.who-cmdr{font-size:.8rem;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.searchbtn{display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;font-size:.85rem;font-weight:600;box-shadow:inset 0 0 0 1.5px var(--line);white-space:nowrap}
+.searchbtn:hover{background:var(--soft)}
+
+/* Life zone: left half subtracts, right half adds */
+.life{position:relative;min-height:0;display:grid;grid-template-rows:1fr auto}
+.tap{position:absolute;top:0;bottom:0;width:50%;display:flex;align-items:center;font:700 2rem/1 var(--font-ui);opacity:.4}
+.tap.minus{left:0;justify-content:flex-start;padding-left:4px}
+.tap.plus{right:0;justify-content:flex-end;padding-right:4px}
+.tap:active{background:var(--soft)}
+.tap.minus:active{border-radius:0 999px 999px 0}
+.tap.plus:active{border-radius:999px 0 0 999px}
+.numwrap{position:relative;min-height:0;container-type:size;display:grid;place-items:center;pointer-events:none}
+.num{
+  font:900 min(86cqh,44cqw)/.82 var(--font-num);
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em;
+  text-shadow:0 2px 28px color-mix(in srgb,var(--bg) 80%,transparent);
+  transition:opacity .3s ease;
+}
+.delta{
+  position:absolute;top:0;left:50%;transform:translateX(-50%);
+  font:700 1.6rem/1 var(--font-num);font-variant-numeric:tabular-nums;opacity:0;transition:opacity .25s ease;
+}
+.delta.on{opacity:.9}
+.credit{position:absolute;right:0;bottom:0;font-size:.65rem;opacity:.7;max-width:45%;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dead{
+  position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:1;
+  background:var(--ink);color:var(--bg);padding:5px 12px;border-radius:6px;
+  font-size:.85rem;font-weight:600;white-space:nowrap;
+}
+.half[data-dead] .num{opacity:.3}
+.turnbox{position:relative;z-index:2;justify-self:center;display:flex;flex-direction:column;align-items:center;gap:6px;padding-top:4px}
+.turnnote{font-size:.82rem;font-weight:600;text-align:center;white-space:pre-line;line-height:1.35;
+  text-shadow:0 1px 10px color-mix(in srgb,var(--bg) 90%,transparent)}
+.turnbtns{display:flex;gap:8px}
+.endturn,.venture{font-weight:700;font-size:.9rem;padding:9px 18px;border-radius:999px;white-space:nowrap}
+.endturn{background:var(--ink);color:var(--bg)}
+.venture{background:color-mix(in srgb,var(--bg) 70%,transparent);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.endturn:active,.venture:active{transform:scale(.97)}
+.half[data-ack] .endturn{box-shadow:0 0 0 3px var(--bg),0 0 0 5px var(--ink)}
+
+/* Counters */
+.counters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.ctr{
+  background:color-mix(in srgb,var(--bg) 55%,transparent);
+  box-shadow:inset 0 0 0 1px var(--soft);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  border-radius:12px;padding:6px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:2px;min-width:0
+}
+.ctr-mid{display:grid;justify-items:center;min-width:0;line-height:1.1}
+.ctr-label{font-size:.75rem;opacity:.85;white-space:nowrap}
+.ctr button{width:36px;height:36px;border-radius:50%;font:600 1.25rem/1 var(--font-ui)}
+.ctr button:active{background:var(--soft)}
+.ctr-val{font:700 1.7rem/1 var(--font-num);font-variant-numeric:tabular-nums;padding:1px 6px;border-radius:6px}
+.ctr-val[data-state="near"]{box-shadow:inset 0 -3px 0 currentColor}
+.ctr-val[data-state="lethal"]{background:var(--ink);color:var(--bg)}
+.ctr-note{font-size:.68rem;opacity:.75;white-space:nowrap}
+
+/* Game-wide designations and permanent statuses */
+.status{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.tok{
+  display:flex;align-items:center;justify-content:center;gap:6px;min-width:0;
+  padding:7px 8px;border-radius:999px;font-size:.8rem;font-weight:600;line-height:1.1;
+  box-shadow:inset 0 0 0 1.5px var(--line);
+  background:color-mix(in srgb,var(--bg) 45%,transparent);
+}
+.tok span{min-width:0;overflow-wrap:anywhere;text-align:center}
+.tok small{display:block;font-weight:400;font-size:.68rem;opacity:.85}
+.tok[aria-pressed="true"]{background:var(--ink);color:var(--bg);box-shadow:none}
+.tok:not([aria-pressed="true"]) svg{opacity:.55}
+
+/* ---------- Shared rail ---------- */
+.rail{
+  background:var(--rail);color:var(--rail-ink);
+  border-block:1px solid var(--rail-line);
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding-block:6px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+}
+.rail button{padding:8px 10px;border-radius:8px;font-size:.88rem;font-weight:600;white-space:nowrap}
+.rail button:hover{background:var(--rail-soft)}
+.rail button:disabled{opacity:.35;cursor:default;background:none}
+.rail .confirm,.rail .confirm:hover{background:var(--rail-ink);color:var(--rail)}
+.turn{text-align:center;line-height:1.15;min-width:0}
+.turn b{display:block;font:700 1.35rem/1 var(--font-num);font-variant-numeric:tabular-nums}
+.turn span{font-size:.75rem;color:var(--rail-mute);white-space:nowrap}
+.rail-group{display:flex;gap:2px}
+
+/* ---------- Sheets: player setup, card search, Undercity ---------- */
+.sheet{
+  position:fixed;inset:0;z-index:15;background:var(--rail);color:var(--rail-ink);
+  display:flex;flex-direction:column;-webkit-user-select:text;user-select:text;
+}
+.sheet[data-p="1"]{transform:rotate(180deg)}
+.sheet-head{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  border-bottom:1px solid var(--rail-line);
+  padding-block:calc(10px + env(safe-area-inset-top,0px)) 10px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+}
+.sheet-head h2{margin:0;font:700 1.15rem/1.2 var(--font-ui);text-wrap:balance}
+.sheet-head button{padding:8px 14px;border-radius:999px;font-weight:600;box-shadow:inset 0 0 0 1.5px var(--rail-line)}
+.sheet-body{
+  flex:1;overflow:auto;overscroll-behavior:contain;
+  padding-block:16px calc(24px + env(safe-area-inset-bottom,0px));
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+}
+.sheet-col{max-width:640px;margin:0 auto;display:grid;gap:20px}
+.field{display:grid;gap:6px;position:relative}
+.field label,.field .lbl{font-size:.85rem;font-weight:600}
+.field input[type="text"],.field input[type="search"]{
+  font:inherit;font-size:1rem;color:inherit;background:var(--rail-soft);
+  border:1px solid var(--rail-line);border-radius:10px;padding:11px 12px;width:100%;
+}
+.field input:focus{outline:2px solid var(--rail-ink);outline-offset:1px}
+.hint{font-size:.85rem;color:var(--rail-mute);margin:0;line-height:1.45}
+.err{font-size:.88rem;margin:0;line-height:1.45;padding:10px 12px;border-radius:10px;background:var(--rail-soft);border-left:3px solid var(--rail-ink)}
+.suggest{display:grid;border-radius:10px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--rail-line)}
+.suggest:empty{display:none}
+.sug{text-align:left;padding:10px 12px;font-size:.95rem;border-top:1px solid var(--rail-line)}
+.sug:first-child{border-top:0}
+.sug:hover,.sug:focus-visible{background:var(--rail-soft)}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{padding:10px 16px;border-radius:999px;font-weight:600;font-size:.92rem;box-shadow:inset 0 0 0 1.5px var(--rail-line)}
+.btn.primary{background:var(--rail-ink);color:var(--rail);box-shadow:none}
+.btn:hover{background:var(--rail-soft)}
+.btn.primary:hover{background:var(--rail-ink)}
+.filebtn{position:relative;overflow:hidden}
+.filebtn input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.swatches{display:flex;gap:10px}
+.swatches button{width:36px;height:36px;border-radius:50%;background:var(--bg);color:var(--ink);font-weight:700;box-shadow:inset 0 0 0 1.5px var(--rail-line)}
+.swatches button[aria-pressed="true"]{box-shadow:0 0 0 3px var(--rail),0 0 0 5px var(--rail-ink)}
+.preview{border-radius:12px;overflow:hidden;aspect-ratio:626/457;max-width:100%;background:center/cover var(--rail-soft)}
+
+/* Card view */
+.card{display:grid;grid-template-columns:minmax(0,220px) minmax(0,1fr);gap:18px;align-items:start}
+.card img{width:100%;border-radius:4.75%/3.5%;display:block}
+.cface + .cface{border-top:1px solid var(--rail-line);padding-top:12px;margin-top:12px}
+.cname{display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap}
+.cname strong{font-size:1.1rem}
+.ctype{font-size:.9rem;color:var(--rail-mute);margin:4px 0 8px}
+.oracle p{margin:0 0 .55em;line-height:1.5;max-width:60ch}
+.pt{font-weight:700;font-variant-numeric:tabular-nums}
+.sym{
+  display:inline-grid;place-items:center;width:1.3em;height:1.3em;border-radius:50%;
+  font-size:.78em;font-weight:700;vertical-align:.08em;margin:0 1px;
+  background:#C9C4BA;color:#1D1B22;
+}
+.sym[data-mana]{background:var(--bg);color:var(--ink)}
+.legal{display:inline-block;font-size:.82rem;font-weight:600;padding:4px 10px;border-radius:999px;box-shadow:inset 0 0 0 1.5px var(--rail-line);margin-top:6px}
+.legal[data-l="banned"]{background:var(--rail-ink);color:var(--rail);box-shadow:none}
+details.rulings summary{cursor:pointer;font-weight:600;padding:6px 0}
+.rulings ul{margin:6px 0 0;padding-left:1.1em;display:grid;gap:8px}
+.rulings li{line-height:1.45;max-width:62ch}
+.rulings time{display:block;font-size:.78rem;color:var(--rail-mute)}
+
+/* Undercity map */
+.dstatus{display:grid;gap:10px}
+.dmap{display:grid;gap:8px}
+.drow{display:grid;gap:8px;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr)}
+.room{
+  text-align:left;padding:10px;border-radius:10px;min-width:0;
+  box-shadow:inset 0 0 0 1px var(--rail-line);display:grid;gap:3px;align-content:start;
+}
+.room b{font-size:.88rem}
+.room span{font-size:.76rem;line-height:1.35;color:var(--rail-mute)}
+.room:disabled{cursor:default;opacity:.55}
+.room[data-s="path"]{background:var(--rail-soft);opacity:1}
+.room[data-s="here"]{background:var(--rail-ink);color:var(--rail);opacity:1}
+.room[data-s="here"] span{color:inherit;opacity:.8}
+.room[data-s="next"]{box-shadow:inset 0 0 0 2px var(--rail-ink);opacity:1}
+.room[data-s="next"]:hover{background:var(--rail-soft)}
+
+/* ---------- Coin flip ---------- */
+.flip{position:fixed;inset:0;z-index:20;background:var(--scrim);display:grid;grid-template-rows:1fr auto 1fr;color:#fff}
+.flip-half{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;text-align:center}
+.flip-half.top{transform:rotate(180deg)}
+.flip-msg{font:700 1.5rem/1.2 var(--font-ui);text-wrap:balance;max-width:20ch;margin:0}
+.flip-sub{font-size:.95rem;opacity:.8;max-width:30ch;margin:0}
+.flip-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.flip-actions button{padding:12px 22px;border-radius:999px;font-weight:700;background:#fff;color:#16141B}
+.flip-actions button.ghost{background:transparent;color:#fff;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6)}
+.coin-wrap{display:grid;place-items:center;perspective:700px;padding:8px}
+.coin{width:120px;height:120px;position:relative;transform-style:preserve-3d}
+.face{
+  position:absolute;inset:0;border-radius:50%;backface-visibility:hidden;
+  background:var(--bg) center/cover;color:var(--ink);display:grid;place-items:center;
+  font:900 3.4rem/1 var(--font-num);
+  box-shadow:inset 0 0 0 5px color-mix(in srgb,var(--ink) 35%,transparent),0 10px 30px rgba(0,0,0,.4);
+}
+.face.back{transform:rotateY(180deg)}
+
+/* Wide screens (laptop, landscape tablet): halves side by side, nobody upside down */
+@media (min-aspect-ratio:5/4) and (min-width:760px){
+  .app{grid-template-rows:1fr;grid-template-columns:1fr auto 1fr}
+  .half.top{transform:none;order:3}
+  .half.bottom{order:1}
+  .rail{order:2;flex-direction:column;justify-content:center;border-block:0;border-inline:1px solid var(--rail-line);padding:12px 8px}
+  .rail-group{flex-direction:column;align-items:center}
+  .sheet[data-p="1"]{transform:none}
+  .flip{grid-template-rows:1fr;grid-template-columns:1fr auto 1fr}
+  .flip-half.top{transform:none;order:3}
+  .flip-half.bottom{order:1}
+  .coin-wrap{order:2}
+}
+@media (max-width:520px){
+  .card{grid-template-columns:1fr}
+  .card img{max-width:260px;margin:0 auto}
+  .drow{grid-auto-flow:row;grid-auto-columns:auto}
+}
+@media (max-width:380px){ .searchbtn span{display:none} }
+@media (prefers-reduced-motion:reduce){ *{transition:none!important} }
+</style>
+
+<main class="app">
+  <section class="half top" id="p1" data-mana="R" aria-label="Player 2"></section>
+  <nav class="rail" aria-label="Game controls">
+    <div class="rail-group">
+      <button id="undo" type="button">Undo</button>
+      <button id="flipbtn" type="button">Flip coin</button>
+    </div>
+    <div class="turn" id="turn" aria-live="polite"></div>
+    <div class="rail-group">
+      <button id="reset" type="button">New game</button>
+    </div>
+  </nav>
+  <section class="half bottom" id="p0" data-mana="U" aria-label="Player 1"></section>
+</main>
+
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+  <header class="sheet-head"><h2 id="sheet-title"></h2><button id="sheet-close" type="button">Close</button></header>
+  <div class="sheet-body"><div class="sheet-col" id="sheet-body"></div></div>
+</div>
+
+<div class="flip" id="flip" hidden role="dialog" aria-modal="true" aria-label="Coin flip for play or draw">
+  <div class="flip-half top" id="flip1"></div>
+  <div class="coin-wrap"><div class="coin" id="coin"><div class="face front" id="face0"></div><div class="face back" id="face1"></div></div></div>
+  <div class="flip-half bottom" id="flip0"></div>
+</div>
+
+<template id="half-tpl">
+  <div class="art"></div>
+  <div class="head">
+    <button class="who" type="button"><span class="who-name"></span><span class="who-cmdr"></span></button>
+    <button class="searchbtn" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M10 3a7 7 0 1 0 4.2 12.6l5.1 5.1 1.4-1.4-5.1-5.1A7 7 0 0 0 10 3zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z"/></svg><span>Card search</span></button>
+  </div>
+  <div class="life">
+    <button class="tap minus" type="button" data-act="life" data-d="-1">−</button>
+    <button class="tap plus" type="button" data-act="life" data-d="1">+</button>
+    <div class="numwrap">
+      <div class="dead" hidden></div>
+      <div class="delta" aria-hidden="true"></div>
+      <div class="num" aria-live="polite"></div>
+      <div class="credit"></div>
+    </div>
+    <div class="turnbox" hidden>
+      <div class="turnnote"></div>
+      <div class="turnbtns">
+        <button class="venture" type="button">Venture</button>
+        <button class="endturn" type="button">End turn</button>
+      </div>
+    </div>
+  </div>
+  <div class="counters">
+    <div class="ctr">
+      <button type="button" data-act="poison" data-d="-1">−</button>
+      <div class="ctr-mid"><span class="ctr-label">Poison</span><span class="ctr-val" data-v="poison"></span><span class="ctr-note">of 10</span></div>
+      <button type="button" data-act="poison" data-d="1">+</button>
+    </div>
+    <div class="ctr">
+      <button type="button" data-act="casts" data-d="-1">−</button>
+      <div class="ctr-mid"><span class="ctr-label">Commander tax</span><span class="ctr-val" data-v="tax"></span><span class="ctr-note" data-v="casts"></span></div>
+      <button type="button" data-act="casts" data-d="1">+</button>
+    </div>
+  </div>
+  <div class="status">
+    <button class="tok monarch" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M3 19h18l-1.6-11-4.6 4.2L12 5l-2.8 7.2L4.6 8z"/></svg><span>Monarch</span></button>
+    <button class="tok init" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M5 21V10a7 7 0 0 1 14 0v11h-4.5v-5.5a2.5 2.5 0 0 0-5 0V21z"/></svg><span>Initiative<small></small></span></button>
+    <button class="tok bless" type="button"><svg class="i" viewBox="0 0 24 24"><path d="M3 21V12l4-3v3l4-3v3l3-2.3V3h2v1.5h2V3h2v18z"/></svg><span>City's blessing</span></button>
+  </div>
+</template>
+
+<script>
+(function(){
+  const MANA = {W:"White",U:"Blue",B:"Black",R:"Red",G:"Green"};
+  const KEY = "duel-tracker-v1";
+  const ART_KEY = "duel-tracker-art";
+  const SCRYFALL = "https://api.scryfall.com";
+
+  // Undercity, as printed on the dungeon card
+  const ROOMS = {
+    entrance: {row:0, name:"Secret Entrance", text:"Search your library for a basic land card, reveal it, put it into your hand, then shuffle.", next:["forge","well"]},
+    forge:    {row:1, name:"Forge", text:"Put two +1/+1 counters on target creature.", next:["trap","arena"]},
+    well:     {row:1, name:"Lost Well", text:"Scry 2.", next:["arena","stash"]},
+    trap:     {row:2, name:"Trap!", text:"Target player loses 5 life.", next:["archives"]},
+    arena:    {row:2, name:"Arena", text:"Goad target creature.", next:["archives","catacombs"]},
+    stash:    {row:2, name:"Stash", text:"Create a Treasure token.", next:["catacombs"]},
+    archives: {row:3, name:"Archives", text:"Draw a card.", next:["throne"]},
+    catacombs:{row:3, name:"Catacombs", text:"Create a 4/1 black Skeleton creature token with menace.", next:["throne"]},
+    throne:   {row:4, name:"Throne of the Dead Three", text:"Reveal the top ten cards of your library. Put a creature card from among them onto the battlefield with three +1/+1 counters on it. It gains hexproof until your next turn. Then shuffle.", next:[]}
+  };
+
+  const fresh = (prev) => ({
+    players:[0,1].map(i => ({
+      name: prev ? prev.players[i].name : "Player " + (i+1),
+      mana: prev ? prev.players[i].mana : (i ? "R" : "U"),
+      life:20, poison:0, casts:0, blessing:false, path:[], completed:0, ventured:0
+    })),
+    turn:0, active:null, first:null, monarch:null, initiative:null
+  });
+  function normalize(s){
+    if (!s || !Array.isArray(s.players)) return fresh();
+    const f = fresh(s);
+    return Object.assign(f, s, {players: s.players.map((pl, i) => Object.assign(f.players[i], pl))});
+  }
+
+  let state;
+  try { state = JSON.parse(localStorage.getItem(KEY)); } catch(e) {}
+  const hot = window.claude && window.claude.hot && window.claude.hot.data;
+  if (hot && hot.players) state = hot;
+  state = normalize(state);
+
+  // Commander art lives outside game state: it survives new games and stays out of undo
+  let arts = [null, null];
+  try { arts = JSON.parse(localStorage.getItem(ART_KEY)) || arts; } catch(e) {}
+
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch(e) {} };
+  const saveArts = () => { try { localStorage.setItem(ART_KEY, JSON.stringify(arts)); return true; } catch(e) { return false; } };
+  if (window.claude && window.claude.hot && window.claude.hot.snapshot) window.claude.hot.snapshot(() => state);
+
+  function h(tag, props, ...kids){
+    const n = document.createElement(tag);
+    for (const k in props || {}) {
+      const v = props[k];
+      if (k === "class") n.className = v;
+      else if (k === "text") n.textContent = v;
+      else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+      else if (v !== false && v != null) n.setAttribute(k, v === true ? "" : v);
+    }
+    for (const c of kids.flat()) if (c != null && c !== false) n.append(c);
+    return n;
+  }
+
+  // Undo: bursts of the same action (a held button) collapse into one step
+  const history = [];
+  let lastKey = null, lastAt = 0;
+  function commit(key, fn){
+    const now = Date.now();
+    if (key !== lastKey || now - lastAt > 1200) {
+      history.push(JSON.stringify(state));
+      if (history.length > 300) history.shift();
+    }
+    lastKey = key; lastAt = now;
+    fn(); save(); render();
+  }
+  const step = (key, fn) => { commit(key, fn); lastKey = null; };
+  const nameOf = p => state.players[p].name.trim() || "Player " + (p+1);
+
+  // Build both halves from the template
+  const halves = [document.getElementById("p0"), document.getElementById("p1")];
+  const tpl = document.getElementById("half-tpl");
+  halves.forEach((half, p) => {
+    half.appendChild(tpl.content.cloneNode(true));
+    half.querySelectorAll("[data-act]").forEach(b => b.dataset.p = p);
+    const who = "player " + (p+1);
+    half.querySelector(".tap.minus").setAttribute("aria-label", "Lose 1 life, " + who);
+    half.querySelector(".tap.plus").setAttribute("aria-label", "Gain 1 life, " + who);
+    half.querySelectorAll(".ctr button").forEach(b => {
+      const what = {poison:"poison counter", casts:"commander cast"}[b.dataset.act];
+      b.setAttribute("aria-label", (b.dataset.d > 0 ? "Add " : "Remove ") + what + ", " + who);
+    });
+    half.querySelector(".who").addEventListener("click", () => openSheet(p, "player"));
+    half.querySelector(".searchbtn").addEventListener("click", () => openSheet(p, "search"));
+    half.querySelector(".endturn").addEventListener("click", () => endTurn(p));
+    half.querySelector(".venture").addEventListener("click", () => openSheet(p, "dungeon"));
+    half.querySelector(".tok.monarch").addEventListener("click", () =>
+      step("monarch", () => { state.monarch = state.monarch === p ? null : p; monarchAck[0] = monarchAck[1] = false; }));
+    half.querySelector(".tok.init").addEventListener("click", () => openSheet(p, "dungeon"));
+    half.querySelector(".tok.bless").addEventListener("click", () =>
+      step("bless", () => { state.players[p].blessing = !state.players[p].blessing; }));
+    half.addEventListener("contextmenu", e => e.preventDefault());
+  });
+
+  // Floating "−3" style running total above the life number
+  const deltas = [{v:0,t:null},{v:0,t:null}];
+  function showDelta(p, d){
+    const s = deltas[p]; s.v += d;
+    const n = halves[p].querySelector(".delta");
+    n.textContent = s.v === 0 ? "" : (s.v > 0 ? "+" + s.v : "−" + Math.abs(s.v));
+    n.classList.toggle("on", s.v !== 0);
+    clearTimeout(s.t);
+    s.t = setTimeout(() => { s.v = 0; n.classList.remove("on"); }, 1600);
+  }
+
+  function act(btn){
+    const p = +btn.dataset.p, d = +btn.dataset.d, kind = btn.dataset.act;
+    const pl = state.players[p];
+    if (kind === "life") {
+      commit("life"+p, () => { pl.life += d; }); showDelta(p, d);
+    } else if (pl[kind] + d >= 0) {
+      commit(kind+p, () => { pl[kind] += d; });
+    }
+  }
+
+  // Tap for one step, hold to keep counting
+  let holdT = null, holdI = null;
+  const stopHold = () => { clearTimeout(holdT); clearInterval(holdI); holdT = holdI = null; };
+  document.addEventListener("pointerdown", e => {
+    const b = e.target.closest("[data-act]");
+    if (!b || e.button > 0) return;
+    e.preventDefault();
+    stopHold(); act(b);
+    holdT = setTimeout(() => { holdI = setInterval(() => act(b), 85); }, 420);
+  });
+  ["pointerup","pointercancel","pointerleave"].forEach(t => document.addEventListener(t, stopHold));
+  window.addEventListener("blur", stopHold);
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-act]");
+    if (b && e.detail === 0) act(b); // keyboard activation
+  });
+
+  // The monarch's end-step draw is easy to forget, so ending the turn as monarch takes a second tap
+  const monarchAck = [false, false];
+  function endTurn(p){
+    if (state.active !== p) return;
+    if (state.monarch === p && !monarchAck[p]) { monarchAck[p] = true; render(); return; }
+    monarchAck[p] = false;
+    step("turn", () => { state.active = 1 - p; state.turn += 1; });
+  }
+
+  function lossReason(pl){
+    if (pl.poison >= 10) return "Defeated by 10 poison counters";
+    if (pl.life <= 0) return "Defeated at " + pl.life + " life";
+    return "";
+  }
+  const roomOf = pl => pl.path.length ? pl.path[pl.path.length - 1] : null;
+
+  function render(){
+    state.players.forEach((pl, p) => {
+      const half = halves[p];
+      half.dataset.mana = pl.mana;
+      const art = arts[p];
+      const artEl = half.querySelector(".art");
+      artEl.classList.toggle("on", !!(art && art.src));
+      artEl.style.backgroundImage = art && art.src ? 'url("' + art.src + '")' : "";
+      half.querySelector(".who-name").textContent = nameOf(p);
+      half.querySelector(".who-cmdr").textContent = art && art.card ? art.card : "Set commander";
+      half.querySelector(".credit").textContent = art && art.artist ? "Art: " + art.artist : "";
+      half.querySelector(".num").textContent = pl.life;
+
+      const v = half.querySelectorAll(".ctr-val");
+      v[0].textContent = pl.poison;
+      v[0].dataset.state = pl.poison >= 10 ? "lethal" : pl.poison >= 7 ? "near" : "";
+      v[1].textContent = "+" + pl.casts * 2;
+      half.querySelector('.ctr-note[data-v="casts"]').textContent =
+        pl.casts === 0 ? "not cast yet" : pl.casts === 1 ? "cast once" : "cast " + pl.casts + " times";
+
+      const reason = lossReason(pl);
+      const dead = half.querySelector(".dead");
+      dead.hidden = !reason; dead.textContent = reason;
+      if (reason) half.dataset.dead = ""; else delete half.dataset.dead;
+
+      half.querySelector(".tok.monarch").setAttribute("aria-pressed", state.monarch === p);
+      const init = half.querySelector(".tok.init");
+      init.setAttribute("aria-pressed", state.initiative === p);
+      const room = roomOf(pl);
+      init.querySelector("small").textContent = room ? ROOMS[room].name : "";
+      init.setAttribute("aria-label", "Initiative and Undercity" + (room ? ", in " + ROOMS[room].name : ""));
+      half.querySelector(".tok.bless").setAttribute("aria-pressed", pl.blessing);
+
+      // Turn reminders for the active player
+      const tb = half.querySelector(".turnbox");
+      const mine = state.active === p;
+      tb.hidden = !mine;
+      if (!mine) monarchAck[p] = false;
+      const notes = [];
+      const needsVenture = mine && state.initiative === p && pl.ventured !== state.turn;
+      if (mine && state.turn === 1) notes.push("Turn 1: skip your draw");
+      if (needsVenture) notes.push("Upkeep: venture into Undercity");
+      if (monarchAck[p]) notes.push("Monarch: draw a card now");
+      else if (mine && state.monarch === p) notes.push("You're the monarch: draw at your end step");
+      if (mine && !notes.length) notes.push("Your turn " + state.turn);
+      tb.querySelector(".turnnote").textContent = notes.join("\n");
+      tb.querySelector(".venture").hidden = !needsVenture;
+      tb.querySelector(".endturn").textContent = monarchAck[p] ? "Card drawn, end turn" : "End turn";
+      if (monarchAck[p]) half.dataset.ack = ""; else delete half.dataset.ack;
+    });
+    renderRail();
+    if (!sheet.hidden && sheetKind === "dungeon") renderDungeon();
+  }
+
+  const turnEl = document.getElementById("turn");
+  function renderRail(){
+    if (state.active === null) {
+      turnEl.replaceChildren(h("b", {text:"–"}), h("span", {text:"Flip to start"}));
+    } else {
+      turnEl.replaceChildren(h("b", {text:"Turn " + state.turn}), h("span", {text:nameOf(state.active)}));
+    }
+    document.getElementById("undo").disabled = history.length === 0;
+  }
+
+  document.getElementById("undo").addEventListener("click", () => {
+    const prev = history.pop();
+    if (!prev) return;
+    state = normalize(JSON.parse(prev)); lastKey = null;
+    monarchAck[0] = monarchAck[1] = false;
+    save(); render();
+  });
+
+  // New game asks for a second tap before wiping the board
+  const resetBtn = document.getElementById("reset");
+  let resetT = null;
+  resetBtn.addEventListener("click", () => {
+    if (!resetBtn.classList.contains("confirm")) {
+      resetBtn.classList.add("confirm"); resetBtn.textContent = "Tap to confirm";
+      resetT = setTimeout(disarm, 3000);
+      return;
+    }
+    disarm();
+    monarchAck[0] = monarchAck[1] = false;
+    step("reset", () => { state = fresh(state); });
+  });
+  function disarm(){ clearTimeout(resetT); resetBtn.classList.remove("confirm"); resetBtn.textContent = "New game"; }
+
+  /* ---------- Scryfall ---------- */
+  const OFFLINE = "Scryfall can't be reached from here. Check the connection. Inside the Claude artifact viewer outside requests are always blocked: open the HTML file directly in a browser to use card lookups.";
+  async function scry(pathOrUrl){
+    let r;
+    try { r = await fetch(pathOrUrl.startsWith("http") ? pathOrUrl : SCRYFALL + pathOrUrl, {headers:{Accept:"application/json"}}); }
+    catch(e) { throw new Error(OFFLINE); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.details || "Scryfall answered with an error (" + r.status + "). Try again in a moment.");
+    return j;
+  }
+  const faceImage = (c, size) => (c.image_uris || (c.card_faces && c.card_faces[0].image_uris) || {})[size];
+
+  function symbols(str){
+    const out = [];
+    String(str || "").split(/(\{[^}]+\})/).forEach(part => {
+      const m = part.match(/^\{([^}]+)\}$/);
+      if (!m) { if (part) out.push(part); return; }
+      const s = m[1];
+      out.push(h("span", {class:"sym", "data-mana": MANA[s] ? s : null, title:s}, s === "T" ? "⟳" : s));
+    });
+    return out;
+  }
+
+  // Name field with Scryfall autocomplete
+  function cardField(id, label, placeholder, onPick){
+    const input = h("input", {id, type:"search", autocomplete:"off", spellcheck:"false", placeholder, enterkeyhint:"search"});
+    const list = h("div", {class:"suggest", role:"listbox", "aria-label":"Suggestions"});
+    let t = null, seq = 0;
+    input.addEventListener("input", () => {
+      clearTimeout(t);
+      const q = input.value.trim();
+      if (q.length < 2) { list.replaceChildren(); return; }
+      t = setTimeout(async () => {
+        const mine = ++seq;
+        try {
+          const r = await scry("/cards/autocomplete?q=" + encodeURIComponent(q));
+          if (mine !== seq) return;
+          list.replaceChildren(...r.data.slice(0, 8).map(name =>
+            h("button", {type:"button", class:"sug", role:"option", onclick:() => { input.value = name; list.replaceChildren(); onPick(name, true); }}, name)));
+        } catch(e) { list.replaceChildren(); }
+      }, 250);
+    });
+    input.addEventListener("keydown", e => {
+      if (e.key !== "Enter") return;
+      e.preventDefault(); clearTimeout(t); seq++; list.replaceChildren();
+      const q = input.value.trim();
+      if (q) onPick(q, false);
+    });
+    return h("div", {class:"field"}, h("label", {for:id, text:label}), input, list);
+  }
+  const named = (q, exact) => scry("/cards/named?" + (exact ? "exact=" : "fuzzy=") + encodeURIComponent(q));
+
+  function cardView(c){
+    const faces = c.card_faces && c.card_faces.length ? c.card_faces : [c];
+    const img = faceImage(c, "normal");
+    const duel = c.legalities && c.legalities.duel;
+    const legalText = {legal:"Legal in Duel Commander", banned:"Banned in Duel Commander", not_legal:"Not legal in Duel Commander", restricted:"Restricted in Duel Commander"}[duel];
+    const text = h("div", null,
+      faces.map(f => h("div", {class:"cface"},
+        h("div", {class:"cname"}, h("strong", {text:f.name}), h("span", null, symbols(f.mana_cost))),
+        h("div", {class:"ctype", text:f.type_line || c.type_line || ""}),
+        h("div", {class:"oracle"}, String(f.oracle_text || "").split("\n").filter(Boolean).map(line => h("p", null, symbols(line)))),
+        f.power != null ? h("div", {class:"pt", text:f.power + "/" + f.toughness}) : null,
+        f.loyalty != null ? h("div", {class:"pt", text:"Loyalty " + f.loyalty}) : null
+      )),
+      legalText ? h("span", {class:"legal", "data-l":duel, text:legalText}) : null
+    );
+    const rulings = h("details", {class:"rulings"}, h("summary", {text:"Rulings"}));
+    let loaded = false;
+    rulings.addEventListener("toggle", async () => {
+      if (!rulings.open || loaded) return;
+      loaded = true;
+      const box = h("div", null, h("p", {class:"hint", text:"Loading rulings…"}));
+      rulings.append(box);
+      try {
+        const r = await scry(c.rulings_uri);
+        box.replaceChildren(r.data.length
+          ? h("ul", null, r.data.map(x => h("li", null, h("time", {text:x.published_at}), symbols(x.comment))))
+          : h("p", {class:"hint", text:"No rulings for this card."}));
+      } catch(e) { loaded = false; box.replaceChildren(h("p", {class:"err", text:e.message})); }
+    });
+    return h("div", {class:"card"},
+      img ? h("img", {src:img, alt:c.name, loading:"lazy"}) : h("div"),
+      h("div", null, h("p", {class:"hint", text:"Current Oracle wording, including errata."}), text, rulings));
+  }
+
+  /* ---------- Sheets ---------- */
+  const sheet = document.getElementById("sheet");
+  const sheetTitle = document.getElementById("sheet-title");
+  const sheetBody = document.getElementById("sheet-body");
+  let sheetKind = null, sheetP = 0, sheetReturn = null;
+
+  function openSheet(p, kind){
+    sheetP = p; sheetKind = kind; sheetReturn = document.activeElement;
+    sheet.dataset.p = p;
+    sheet.hidden = false;
+    if (kind === "player") renderPlayer();
+    if (kind === "search") renderSearch();
+    if (kind === "dungeon") renderDungeon();
+    const first = sheetBody.querySelector("input,button");
+    if (first && kind !== "dungeon") first.focus(); else document.getElementById("sheet-close").focus();
+  }
+  function closeSheet(){
+    sheet.hidden = true; sheetKind = null;
+    if (sheetReturn && sheetReturn.focus) sheetReturn.focus();
+  }
+  document.getElementById("sheet-close").addEventListener("click", closeSheet);
+
+  function renderPlayer(){
+    const p = sheetP, pl = state.players[p];
+    sheetTitle.textContent = nameOf(p);
+    const nameInput = h("input", {id:"pname", type:"text", maxlength:"18", autocomplete:"off", spellcheck:"false", value:pl.name});
+    nameInput.addEventListener("input", () => { pl.name = nameInput.value; save(); sheetTitle.textContent = nameOf(p); render(); });
+
+    const msg = h("div");
+    const preview = h("div", {class:"preview", role:"img", "aria-label":"Commander art"});
+    const setPreview = () => {
+      const a = arts[p];
+      preview.hidden = !(a && a.src);
+      preview.style.backgroundImage = a && a.src ? 'url("' + a.src + '")' : "";
+      removeBtn.hidden = !(a && a.src);
+    };
+    const removeBtn = h("button", {type:"button", class:"btn", text:"Remove picture", onclick:() => { arts[p] = null; saveArts(); setPreview(); render(); }});
+
+    const cmdr = cardField("cmdr-q", "Commander", "Search Scryfall, e.g. Atraxa", async (q, exact) => {
+      msg.replaceChildren(h("p", {class:"hint", text:"Looking up " + q + "…"}));
+      try {
+        const c = await named(q, exact);
+        const src = faceImage(c, "art_crop");
+        if (!src) throw new Error(c.name + " has no artwork on Scryfall. Upload a picture instead.");
+        arts[p] = {src, card:c.name, artist:c.artist || ""};
+        saveArts();
+        const ci = (c.color_identity || []).filter(x => MANA[x]);
+        if (ci.length) state.players[p].mana = "WUBRG".split("").find(x => ci.includes(x));
+        save(); render(); renderSwatches(); setPreview();
+        msg.replaceChildren(h("p", {class:"hint", text:c.name + " is set as your commander."}));
+      } catch(e) { msg.replaceChildren(h("p", {class:"err", text:e.message})); }
+    });
+
+    const file = h("input", {id:"cmdr-file", type:"file", accept:"image/*", "aria-label":"Upload a picture of your commander"});
+    file.addEventListener("change", () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 900 / img.width);
+        const cv = document.createElement("canvas");
+        cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(img.src);
+        arts[p] = {src:cv.toDataURL("image/jpeg", .82), card:"Own picture", artist:""};
+        const kept = saveArts();
+        render(); setPreview();
+        msg.replaceChildren(h("p", {class:"hint", text: kept ? "Picture set." : "Picture set for now. The browser has no room to keep it after a reload."}));
+      };
+      img.onerror = () => msg.replaceChildren(h("p", {class:"err", text:"That file isn't an image this browser can read. Try a JPG or PNG."}));
+      img.src = URL.createObjectURL(f);
+    });
+
+    const swatches = h("div", {class:"swatches", role:"group", "aria-label":"Color"});
+    function renderSwatches(){
+      swatches.replaceChildren(...Object.keys(MANA).map(k => h("button", {
+        type:"button", "data-mana":k, "aria-label":MANA[k], "aria-pressed": String(state.players[p].mana === k), text:k,
+        onclick:() => { step("mana"+p, () => { state.players[p].mana = k; }); renderSwatches(); }
+      })));
+    }
+    renderSwatches();
+
+    sheetBody.replaceChildren(
+      h("div", {class:"field"}, h("label", {for:"pname", text:"Name"}), nameInput),
+      h("div", {class:"field"}, cmdr, msg, preview,
+        h("div", {class:"btnrow"},
+          h("span", {class:"btn filebtn"}, "Upload picture", file),
+          removeBtn),
+        h("p", {class:"hint", text:"The art fills your half behind the life total. Picking a commander also sets your color."})),
+      h("div", {class:"field"}, h("span", {class:"lbl", text:"Color"}), swatches)
+    );
+    setPreview();
+  }
+
+  function renderSearch(){
+    sheetTitle.textContent = "Card search";
+    const out = h("div", null, h("p", {class:"hint", text:"Look up any card's current Oracle text, rulings and Duel Commander legality."}));
+    const field = cardField("search-q", "Card name", "e.g. Lightning Bolt", async (q, exact) => {
+      out.replaceChildren(h("p", {class:"hint", text:"Looking up " + q + "…"}));
+      try { out.replaceChildren(cardView(await named(q, exact))); }
+      catch(e) { out.replaceChildren(h("p", {class:"err", text:e.message})); }
+    });
+    sheetBody.replaceChildren(field, out);
+  }
+
+  function venture(p, id){
+    step("venture", () => {
+      const pl = state.players[p];
+      if (roomOf(pl) === "throne") pl.path = [];
+      pl.path.push(id);
+      if (id === "throne") pl.completed += 1;
+      if (state.active === p) pl.ventured = state.turn;
+    });
+  }
+
+  function renderDungeon(){
+    const p = sheetP, pl = state.players[p], o = 1 - p;
+    sheetTitle.textContent = "Undercity";
+    const room = roomOf(pl);
+    const options = !room || room === "throne" ? ["entrance"] : ROOMS[room].next;
+    const holder = state.initiative;
+    const statusText = holder === p ? "You have the initiative. Venture when you take it and at the start of each of your upkeeps."
+      : holder === o ? nameOf(o) + " has the initiative. Deal combat damage to them to take it."
+      : "Nobody has the initiative yet.";
+    const take = h("button", {type:"button", class:"btn primary",
+      text: holder === p ? "Take the initiative again" : "Take the initiative",
+      onclick:() => { step("init", () => { state.initiative = p; }); }});
+    const takeHint = h("p", {class:"hint", text:"Taking the initiative ventures into Undercity: pick the next room below."});
+
+    const rows = [[],[],[],[],[]];
+    Object.keys(ROOMS).forEach(id => {
+      const r = ROOMS[id];
+      const s = id === room ? "here" : pl.path.includes(id) && room !== "throne" ? "path" : options.includes(id) ? "next" : "";
+      rows[r.row].push(h("button", {type:"button", class:"room", "data-s":s, disabled: s !== "next",
+        "aria-label": r.name + (s === "here" ? ", current room" : s === "next" ? ", venture here" : ""),
+        onclick:() => venture(p, id)}, h("b", {text:r.name}), h("span", {text:r.text})));
+    });
+
+    const extra = [];
+    if (room === "trap") extra.push(h("button", {type:"button", class:"btn", text:nameOf(o) + " loses 5 life",
+      onclick:() => { step("trap", () => { state.players[o].life -= 5; }); showDelta(o, -5); }}));
+    if (room === "throne") extra.push(h("p", {class:"hint", text:"Dungeon completed. Your next venture starts a new Undercity at the Secret Entrance."}));
+
+    sheetBody.replaceChildren(
+      h("div", {class:"dstatus"},
+        h("p", {class:"hint", text:statusText}),
+        h("div", {class:"btnrow"}, take),
+        takeHint,
+        h("p", {class:"hint", text:"Completed dungeons: " + pl.completed}),
+        extra.length ? h("div", {class:"btnrow"}, extra) : null),
+      h("div", {class:"dmap"}, rows.map(r => h("div", {class:"drow"}, r)))
+    );
+  }
+
+  /* ---------- Coin flip for play/draw ---------- */
+  const flip = document.getElementById("flip");
+  const flipHalves = [document.getElementById("flip0"), document.getElementById("flip1")];
+  const coin = document.getElementById("coin");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let anim = null, flipT = null;
+
+  function startFlip(){
+    const winner = crypto.getRandomValues(new Uint8Array(1))[0] & 1;
+    [0,1].forEach(p => {
+      const f = document.getElementById("face"+p);
+      f.dataset.mana = state.players[p].mana;
+      const a = arts[p];
+      f.style.backgroundImage = a && a.src ? 'url("' + a.src + '")' : "";
+      f.textContent = a && a.src ? "" : nameOf(p)[0].toUpperCase();
+      flipHalves[p].replaceChildren(h("p", {class:"flip-msg", text:"Flipping…"}));
+    });
+    flip.hidden = false;
+    if (anim) anim.cancel();
+    const end = winner === 0 ? 1800 : 1980;
+    anim = coin.animate(
+      [{transform:"rotateY(0deg) translateY(0)"},{transform:"rotateY(" + end/2 + "deg) translateY(-30px)"},{transform:"rotateY(" + end + "deg) translateY(0)"}],
+      {duration: reduce ? 1 : 1700, easing:"cubic-bezier(.2,.7,.3,1)", fill:"forwards"}
+    );
+    // A timer rather than onfinish, so a paused animation clock can't leave the flip stuck
+    clearTimeout(flipT);
+    flipT = setTimeout(() => showResult(winner), reduce ? 0 : 1750);
+  }
+
+  function showResult(w){
+    const play = h("button", {type:"button", text:"Play first", onclick:() => choose(w)});
+    const draw = h("button", {type:"button", class:"ghost", text:"Draw first", onclick:() => choose(1-w)});
+    flipHalves[w].replaceChildren(
+      h("p", {class:"flip-msg", text:"You won the flip"}),
+      h("p", {class:"flip-sub", text:"The player on the play skips their first draw."}),
+      h("div", {class:"flip-actions"}, play, draw));
+    flipHalves[1-w].replaceChildren(
+      h("p", {class:"flip-msg", text:nameOf(w) + " won the flip"}),
+      h("p", {class:"flip-sub", text:"They are choosing to play or draw."}),
+      h("div", {class:"flip-actions"}, h("button", {type:"button", class:"ghost", text:"Cancel", onclick:closeFlip})));
+    play.focus();
+  }
+  function choose(first){
+    step("start", () => { state.first = first; state.active = first; state.turn = 1; });
+    closeFlip();
+  }
+  function closeFlip(){ flip.hidden = true; clearTimeout(flipT); if (anim) anim.cancel(); }
+
+  document.getElementById("flipbtn").addEventListener("click", startFlip);
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    if (!flip.hidden) closeFlip(); else if (!sheet.hidden) closeSheet();
+  });
+
+  // Keep the screen awake during a game where allowed
+  let lock = null;
+  async function wake(){
+    try {
+      if (!lock && navigator.wakeLock && document.visibilityState === "visible") {
+        lock = await navigator.wakeLock.request("screen");
+        lock.addEventListener("release", () => { lock = null; });
+      }
+    } catch(e) {}
+  }
+  document.addEventListener("pointerdown", wake, {passive:true});
+  document.addEventListener("visibilitychange", wake);
+
+  render();
+})();
+</script>
